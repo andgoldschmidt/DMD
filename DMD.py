@@ -4,19 +4,25 @@
 #
 # TODO
 # - Should we create an ABC interface for DMD?
+# - Should we store the DMD result as a scipy state space model (dlsim)?
+# - Else, should simulate have options 'continuous' and 'euler'? (at interface)
+# - Predict from arbitrary initial conditions
+# - Better zero control behavior (string 'Zero'?)
 #-----
 import numpy as np
 from numpy.linalg import *
 import matplotlib.pyplot as plt
 
+# ------------------------------------------------------
+# -- Helper methods
+# ------------------------------------------------------
 color = plt.rcParams['axes.prop_cycle'].by_key()['color'] # store color array
 
-# -- Helper methods
 def delay_embed(X, shift):
     '''
     Delay-embed the matrix X with measurements from future times.
     
-    parameters:
+    parameters:)
         X: Data matrix with columns storing states at sequential time measurements
         shift: Number of future times copies to augment to the current time state       
     '''
@@ -37,9 +43,11 @@ def plot_eigs(eigs, **kwargs):
     ax.set_aspect('equal'), ax.set_xlim(xlim), ax.set_ylim(ylim)
     ax.scatter(eigs.real, eigs.imag)
     ax.add_artist(plt.Circle((0,0), 1, color='k', linestyle='--', fill=False))
-    return fig, ax    
+    return fig, ax
 
+# ------------------------------------------------------
 # -- Main class
+# ------------------------------------------------------
 class DMD:
     def __init__(self, X, sample_times, dmd_modes='exact', threshold=None):
         self.X1 = X[:, :-1]
@@ -57,6 +65,7 @@ class DMD:
             S = S[:r]
             Vt = Vt[:r,:]
         self.Atilde = dag(U)@self.X2@dag(Vt)@np.diag(1/S)
+        self.A = self.X2@dag(Vt)@np.diag(1/S)@dag(U)
 
         # II. Atilde W = W Y (Eigendecomposition)
         self.eigs, W = eig(self.Atilde)
@@ -80,7 +89,8 @@ class DMD:
         and (curlyA,Omega), e^log(Y)/dt = Omega 
         '''
         if np.isscalar(t):
-            return np.exp(np.log(self.eigs)*(t-self.t0)/self.dt)
+            # Cast eigs to complex numbers for logarithm
+            return np.exp(np.log(self.eigs + 0j)*(t-self.t0)/self.dt)
         else:
             return np.array([self.time_spectrum(it) for it in t]).T
         
@@ -98,8 +108,9 @@ class DMD:
             return np.array([self.predict(it) for it in t]).T
         
 
-
+# ------------------------------------------------------
 # -- DMD with control (DMDc)
+# ------------------------------------------------------
 class DMDc:   
     def __init__(self, X, Ups, sample_times, threshold=None):
         # prelim
@@ -160,6 +171,8 @@ class DMDc:
         Predict the future state from A and B using steps from X0 as long as a control signal is available.
             Default behavior (control=None) is to use the original control. (If the underlying A is desired, 
             format zeros_like u that runs for the desired time.)
+
+        TODO: Continuous time, en.wikipedia.org/wiki/Discretization#Discretization_of_linear_state_space_models
         '''
         Ups = self.Ups if control is None else control
         xt = self.X1[:,0]
