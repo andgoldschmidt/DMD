@@ -101,11 +101,12 @@ class DMD:
         Default is to predict along the original timesteps.
         '''
         t = self.orig_timesteps if t is None else t 
-
+        left = self.modes
+        right = pinv(self.modes)@self.X1[:,0]
         if np.isscalar(t):
-            return self.modes@np.diag(self.time_spectrum(t))@pinv(self.modes)@self.X1[:,0]
+            return left@np.diag(self.time_spectrum(t))@right
         else:
-            return np.array([self.predict(it) for it in t]).T
+            return np.array([left@np.diag(self.time_spectrum(it))@right for it in t]).T
         
 
 # ------------------------------------------------------
