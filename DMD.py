@@ -9,6 +9,7 @@
 # - Predict from arbitrary initial conditions
 # - Better zero control behavior (string 'Zero'?)
 #-----
+import abc
 import numpy as np
 from numpy.linalg import *
 import matplotlib.pyplot as plt
@@ -82,11 +83,11 @@ class DMD:
 
     def time_spectrum(self, t):
         '''
-        Returns a continous approximation to the time dynamics of A, with dimensions
-        according to (eigenvalues)x(times).
+        Returns a continous approximation to the time dynamics of A (discrete time), 
+        with dimensions of (eigenvalues)x(times).
 
-        Note that A = e^(curlyA dt) so we have for operator,eigs pairs of (A,Y) 
-        and (curlyA,Omega), e^log(Y)/dt = Omega 
+        Note that A = e^(ct_A dt) so we have for (operator,eigs) pairs of (A, Y) 
+        and (ct_A, Omega), such that e^log(Y)/dt = Omega 
         '''
         if np.isscalar(t):
             # Cast eigs to complex numbers for logarithm
@@ -140,6 +141,7 @@ class DMDc:
             U = U[:,:r2]
             S = S[:r2]
             Vt = Vt[:r2,:]
+
         # II. Compute operators
         n,_ = self.X2.shape
         self.Atilde = dag(U)@self.X2@dag(Vgt)@np.diag(1/Sg)@dag(Ug[:n,:])@U
@@ -153,19 +155,6 @@ class DMDc:
         # Also need Btilde -> B -> continuous B operator 
         self.B = self.X2@dag(Vgt)@np.diag(1/Sg)@dag(Ug[n:,:])
 #         self.Bcurly = # TODO
-
-    def time_spectrum(self, t):
-        '''
-        Returns a continous approximation to the time dynamics of A, with dimensions
-        according to (eigenvalues)x(times).
-
-        Note that A = e^(curlyA dt) so we have for operator,eigs pairs of (A,Y) 
-        and (curlyA,Omega), e^log(Y)/dt = Omega 
-        '''
-        if np.isscalar(t):
-            return np.exp(np.log(self.eigs)*(t-self.t0)/self.dt)
-        else:
-            return np.array([self.time_spectrum(it) for it in t]).T
 
     def predict(self, control=None):
         '''
