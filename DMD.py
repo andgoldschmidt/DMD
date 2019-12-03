@@ -11,7 +11,7 @@
 #-----
 import abc
 import numpy as np
-from numpy.linalg import *
+from numpy.linalg import svd, pinv, eig
 import matplotlib.pyplot as plt
 
 # ------------------------------------------------------
