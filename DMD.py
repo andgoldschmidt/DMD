@@ -9,6 +9,7 @@
 #-----
 import numpy as np
 from numpy.linalg import svd, pinv, eig
+from scipy.linalg import logm, expm
 import matplotlib.pyplot as plt
 
 # ------------------------------------------------------
@@ -33,6 +34,46 @@ def delay_embed(X, shift):
 
 def dag(X):
     return X.conj().T # Conjugate transpose (dagger) shorthand
+
+def cts_to_dst(cA, cB, dt):
+    '''
+    Convert constant continuous state space matrices to discrete
+    matrices with time step dt using:
+        exp(dt*[[cA, cB],  = [[dA, dB],
+                [0,  0 ]])    [0,  1 ]]
+    
+    Returns:
+        dA, dB
+
+    Require cA \in R^(na x na) and cB \in R^(na x nb). The zero and 
+    identity components make the matrix square.
+    '''
+    na,_ = cA.shape
+    _,nb = cB.shape
+    cM = np.block([[cA, cB],
+                   [np.zeros([nb,na]), np.zeros([nb,nb])]])
+    dM = expm(cM*dt)
+    return dM[:na,:na], dM[:na, na:]
+
+def dst_to_cts(dA, dB, dt):
+    '''
+    Convert discrete state space matrices with time step dt to 
+    continuous matrices by inverting:
+        exp(dt*[[cA, cB],  = [[dA, dB],
+                [0,  0 ]])    [0,  1 ]]
+
+    Returns:
+        cA, cB
+
+    Require dA \in R^(na x na) and dB \in R^(na x nb). The zero and 
+    identity components make the matrix square.
+    '''
+    na,_ = dA.shape
+    _,nb = dB.shape
+    dM = np.block([[dA, dB],
+                   [np.zeros([nb,na]), np.identity(nb)]])
+    cM = logm(dM)/dt
+    return cM[:na,:na], cM[:na, na:]
 
 def plot_eigs(eigs, **kwargs):
     ''' 
