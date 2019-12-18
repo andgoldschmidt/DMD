@@ -35,7 +35,7 @@ def delay_embed(X, shift):
 def dag(X):
     return X.conj().T # Conjugate transpose (dagger) shorthand
 
-def cts_to_dst(cA, cB, dt):
+def dst_from_cts(cA, cB, dt):
     '''
     Convert constant continuous state space matrices to discrete
     matrices with time step dt using:
@@ -55,7 +55,7 @@ def cts_to_dst(cA, cB, dt):
     dM = expm(cM*dt)
     return dM[:na,:na], dM[:na, na:]
 
-def dst_to_cts(dA, dB, dt):
+def cts_from_dst(dA, dB, dt):
     '''
     Convert discrete state space matrices with time step dt to 
     continuous matrices by inverting:
