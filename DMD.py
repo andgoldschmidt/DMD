@@ -78,7 +78,7 @@ class DMD:
 
         self.t0 = ts[0]
         self.dt = ts[1] - ts[0]
-        self.orig_timesteps = ts if len(ts) == len(self.X1) else ts[:-1]
+        self.orig_timesteps = ts if len(ts) == self.X1.shape[1] else ts[:-1]
 
         dmd_modes = kwargs.get('dmd_modes', 'exact')
         threshold = kwargs.get('threshold')
@@ -86,7 +86,7 @@ class DMD:
         # I. X2 = A X1 and Atilde = U*AU
         U, S, Vt = svd(self.X1, full_matrices=False)
         if threshold:
-            r = np.sum(S > threshold)
+            r = np.sum(S/np.max(S) > threshold)
             U = U[:,:r]
             S = S[:r]
             Vt = Vt[:r,:]
@@ -179,7 +179,7 @@ class DMDc:
         
         self.t0 = ts[0]
         self.dt = ts[1] - ts[0]
-        self.orig_timesteps = ts if len(ts) == len(self.X1) else ts[:-1]
+        self.orig_timesteps = ts if len(ts) == self.X1.shape[1] else ts[:-1]
         
         # I. Compute SVDs
         Omega = np.vstack([self.X1, self.Ups])
@@ -191,12 +191,12 @@ class DMDc:
             # Allow for independent thresholding
             t1,t2 = 2*[threshold] if np.isscalar(threshold) else threshold
             # Threshold right hand side
-            r1 = np.sum(Sg > t1)
+            r1 = np.sum(Sg/np.max(Sg) > t1)
             Ug = Ug[:,:r1]
             Sg = Sg[:r1]
             Vgt = Vgt[:r1,:]
             # Threshold left hand side
-            r2 = np.sum(S > t2)
+            r2 = np.sum(S/np.max(S) > t2)
             U = U[:,:r2]
             S = S[:r2]
             Vt = Vt[:r2,:]
@@ -280,7 +280,7 @@ class bilinear_DMDc:
 
         self.t0 = ts[0]
         self.dt = ts[1] - ts[0]
-        self.orig_timesteps = ts if len(ts) == len(self.X1) else ts[:-1]
+        self.orig_timesteps = ts if len(ts) == self.X1.shape[1] else ts[:-1]
 
         # Partially unwrap delay embedding to make sure the correct control signals
         # are combined with the correct data times.
@@ -300,12 +300,12 @@ class bilinear_DMDc:
             # Allow for independent thresholding
             t1,t2 = 2*[threshold] if np.isscalar(threshold) else threshold
             # Threshold right hand side
-            r1 = np.sum(Sg > t1)
+            r1 = np.sum(Sg/np.max(Sg) > t1)
             Ug = Ug[:,:r1]
             Sg = Sg[:r1]
             Vgt = Vgt[:r1,:]
             # Threshold left hand side
-            r2 = np.sum(S > t2)
+            r2 = np.sum(S/np.max(S) > t2)
             U = U[:,:r2]
             S = S[:r2]
             Vt = Vt[:r2,:]
