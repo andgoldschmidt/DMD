@@ -102,8 +102,9 @@ class DMD:
                 Sequential time series at which the X (or X1) measurements were taken.
 
         Optional parameters:
-            dmd_modes: default 'exact'
-            threshold: default None
+            dmd_modes: {'exact', 'projected'}. default 'exact'
+            threshold: Real or int. default None
+            threshold_type: (requires a threshold) {'number', 'percent'}. default 'percent'
 
         Updates:
             self.X2,self.X1: data
@@ -120,14 +121,16 @@ class DMD:
         self.t0 = ts[0]
         self.dt = ts[1] - ts[0]
         self.orig_timesteps = ts if len(ts) == self.X1.shape[1] else ts[:-1]
-
-        dmd_modes = kwargs.get('dmd_modes', 'exact')
-        threshold = kwargs.get('threshold')
         
         # I. X2 = A X1 and Atilde = U*AU
+        threshold = kwargs.get('threshold', None)
         U, S, Vt = svd(self.X1, full_matrices=False)
         if threshold:
-            r = np.sum(S/np.max(S) > threshold)
+            threshold_type = kwargs.get('threshold_type', 'percent')
+            if threshold_type == 'percent':
+                r = np.sum(S/np.max(S) > threshold)
+            elif threshold_type == 'count':
+                r = threshold
             U = U[:,:r]
             S = S[:r]
             Vt = Vt[:r,:]
@@ -140,6 +143,7 @@ class DMD:
         # III. Two versions (eigenvectors of A)
         #      DMD_exact = X2 V S^-1 W 
         #      DMD_proj = U W
+        dmd_modes = kwargs.get('dmd_modes', 'exact')
         if dmd_modes == 'exact':
             self.modes = self.X2@dag(Vt)@np.diag(1/S)@W
         elif dmd_modes == 'projected':
@@ -201,7 +205,8 @@ class DMDc:
                 Sequential time series at which the X (or X1) measurements were taken.
 
         Optional parameters:
-            threshold: default None
+            threshold: Real or int. default None
+            threshold_type: (requires a threshold) {'number', 'percent'}. default 'percent'
 
         Updates:
             self.X2,self.X1: data
@@ -231,13 +236,21 @@ class DMDc:
         if np.any(threshold):
             # Allow for independent thresholding
             t1,t2 = 2*[threshold] if np.isscalar(threshold) else threshold
+
+            # Select threshold type
+            threshold_type = kwargs.get('threshold_type', 'percent')
+            if threshold_type == 'percent':
+                r1 = np.sum(Sg/np.max(Sg) > t1)
+                r2 = np.sum(S/np.max(S) > t2)
+            elif threshold_type == 'count':
+                r1 = t1
+                r2 = t2
+
             # Threshold right hand side
-            r1 = np.sum(Sg/np.max(Sg) > t1)
             Ug = Ug[:,:r1]
             Sg = Sg[:r1]
             Vgt = Vgt[:r1,:]
             # Threshold left hand side
-            r2 = np.sum(S/np.max(S) > t2)
             U = U[:,:r2]
             S = S[:r2]
             Vt = Vt[:r2,:]
@@ -340,13 +353,21 @@ class bilinear_DMDc:
         if np.any(threshold):
             # Allow for independent thresholding
             t1,t2 = 2*[threshold] if np.isscalar(threshold) else threshold
+
+            # Select threshold type
+            threshold_type = kwargs.get('threshold_type', 'percent')
+            if threshold_type == 'percent':
+                r1 = np.sum(Sg/np.max(Sg) > t1)
+                r2 = np.sum(S/np.max(S) > t2)
+            elif threshold_type == 'count':
+                r1 = t1
+                r2 = t2
+
             # Threshold right hand side
-            r1 = np.sum(Sg/np.max(Sg) > t1)
             Ug = Ug[:,:r1]
             Sg = Sg[:r1]
             Vgt = Vgt[:r1,:]
             # Threshold left hand side
-            r2 = np.sum(S/np.max(S) > t2)
             U = U[:,:r2]
             S = S[:r2]
             Vt = Vt[:r2,:]
