@@ -104,7 +104,8 @@ class DMD:
         Optional parameters:
             dmd_modes: {'exact', 'projected'}. default 'exact'
             threshold: Real or int. default None
-            threshold_type: (requires a threshold) {'number', 'percent'}. default 'percent'
+                Truncate the singular values associated with DMD modes
+            threshold_type: (requires param threshold) {'number', 'percent'}. default 'percent'
 
         Updates:
             self.X2,self.X1: data
@@ -206,7 +207,8 @@ class DMDc:
 
         Optional parameters:
             threshold: Real or int. default None
-            threshold_type: (requires a threshold) {'number', 'percent'}. default 'percent'
+                Truncate the singular values associated with DMD modes
+            threshold_type: (requires param threshold) {'number', 'percent'}. default 'percent'
 
         Updates:
             self.X2,self.X1: data
@@ -279,8 +281,6 @@ class DMDc:
         Predict the future state from A and B using steps from X0 as long as a control signal is available.
             Default behavior (control=None) is to use the original control. (If the underlying A is desired, 
             format zeros_like u that runs for the desired time.)
-
-        TODO: Continuous time, en.wikipedia.org/wiki/Discretization#Discretization_of_linear_state_space_models
         '''
         Ups = self.Ups if control is None else control
         xt = self.X1[:,0] if x0 is None else x0
@@ -314,7 +314,9 @@ class bilinear_DMDc:
         Optional Parameters:
             shift: default 0 
                 Number of time delays (necessary to match times in the u B X control term)
-            threshold: default None
+            threshold: Real or int. default None
+                Truncate the singular values associated with DMD modes
+            threshold_type: (requires param threshold) {'number', 'percent'}. default 'percent'
 
         Updates:
             self.X2,self.X1: data
