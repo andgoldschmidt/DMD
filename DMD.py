@@ -88,6 +88,26 @@ def plot_eigs(eigs, **kwargs):
     ax.add_artist(plt.Circle((0,0), 1, color='k', linestyle='--', fill=False))
     return fig, ax
 
+def _threshold_svd(X, threshold, threshold_type):
+    '''
+    Parameters:
+        X: 
+            Matrix for SVD
+        threshold: Pos. real, int, or None
+            Truncation value for SVD results
+        threshold_type: 'percent', 'count'
+            Type of truncation, ignored if threshold=None
+    '''
+    U, S, Vt = svd(X, full_matrices=False)
+    if threshold is None:
+        r = threshold
+    else:
+        if threshold_type == 'percent':
+            r = np.sum(S/np.max(S) > threshold)
+        elif threshold_type == 'count':
+            r = threshold
+    return U[:,:r], S[:r], Vt[:r,:]
+
 # ------------------------------------------------------
 # -- Main class
 # ------------------------------------------------------
@@ -123,27 +143,22 @@ class DMD:
         self.dt = ts[1] - ts[0]
         self.orig_timesteps = ts if len(ts) == self.X1.shape[1] else ts[:-1]
         
-        # I. X2 = A X1 and Atilde = U*AU
+        # I. Compute SVD
         threshold = kwargs.get('threshold', None)
-        U, S, Vt = svd(self.X1, full_matrices=False)
-        if threshold:
-            threshold_type = kwargs.get('threshold_type', 'percent')
-            if threshold_type == 'percent':
-                r = np.sum(S/np.max(S) > threshold)
-            elif threshold_type == 'count':
-                r = threshold
-            U = U[:,:r]
-            S = S[:r]
-            Vt = Vt[:r,:]
+        threshold_type = kwargs.get('threshold_type', 'percent')
+        U, S, Vt = _threshold_svd(self.X1, threshold, threshold_type)
+
+        # II: Compute operators: X2 = A X1 and Atilde = U*AU
         Atilde = dag(U)@self.X2@dag(Vt)@np.diag(1/S)
         self.A = self.X2@dag(Vt)@np.diag(1/S)@dag(U)
 
-        # II. Atilde W = W Y (Eigendecomposition)
+        # III. DMD Modes
+        #       Atilde W = W Y (Eigendecomposition)
         self.eigs, W = eig(Atilde)
 
-        # III. Two versions (eigenvectors of A)
-        #      DMD_exact = X2 V S^-1 W 
-        #      DMD_proj = U W
+        # Two versions (eigenvectors of A)
+        #       (i)  DMD_exact = X2 V S^-1 W 
+        #       (ii) DMD_proj = U W
         dmd_modes = kwargs.get('dmd_modes', 'exact')
         if dmd_modes == 'exact':
             self.modes = self.X2@dag(Vt)@np.diag(1/S)@W
@@ -231,31 +246,12 @@ class DMDc:
         
         # I. Compute SVDs
         Omega = np.vstack([self.X1, self.Ups])
-        Ug,Sg,Vgt = svd(Omega, full_matrices=False)
-        U,S,Vt = svd(self.X2, full_matrices=False)
-
-        threshold = kwargs.get('threshold')
-        if np.any(threshold):
-            # Allow for independent thresholding
-            t1,t2 = 2*[threshold] if np.isscalar(threshold) else threshold
-
-            # Select threshold type
-            threshold_type = kwargs.get('threshold_type', 'percent')
-            if threshold_type == 'percent':
-                r1 = np.sum(Sg/np.max(Sg) > t1)
-                r2 = np.sum(S/np.max(S) > t2)
-            elif threshold_type == 'count':
-                r1 = t1
-                r2 = t2
-
-            # Threshold right hand side
-            Ug = Ug[:,:r1]
-            Sg = Sg[:r1]
-            Vgt = Vgt[:r1,:]
-            # Threshold left hand side
-            U = U[:,:r2]
-            S = S[:r2]
-            Vt = Vt[:r2,:]
+        threshold = kwargs.get('threshold', None)
+        # Allow for independent thresholding
+        t1,t2 = 2*[threshold] if np.isscalar(threshold) else threshold
+        threshold_type = kwargs.get('threshold_type', 'percent')
+        Ug,Sg,Vgt = _threshold_svd(Omega, t1, threshold_type)
+        U,S,Vt = _threshold_svd(self.X2, t2, threshold_type)
 
         # II. Compute operators
         n,_ = self.X2.shape
@@ -348,31 +344,12 @@ class bilinear_DMDc:
         
         # I. Compute SVDs
         Omega = np.vstack([self.X1, self.Ups])
-        Ug,Sg,Vgt = svd(Omega, full_matrices=False)
-        U,S,Vt = svd(self.X2, full_matrices=False)
-
-        threshold = kwargs.get('threshold')
-        if np.any(threshold):
-            # Allow for independent thresholding
-            t1,t2 = 2*[threshold] if np.isscalar(threshold) else threshold
-
-            # Select threshold type
-            threshold_type = kwargs.get('threshold_type', 'percent')
-            if threshold_type == 'percent':
-                r1 = np.sum(Sg/np.max(Sg) > t1)
-                r2 = np.sum(S/np.max(S) > t2)
-            elif threshold_type == 'count':
-                r1 = t1
-                r2 = t2
-
-            # Threshold right hand side
-            Ug = Ug[:,:r1]
-            Sg = Sg[:r1]
-            Vgt = Vgt[:r1,:]
-            # Threshold left hand side
-            U = U[:,:r2]
-            S = S[:r2]
-            Vt = Vt[:r2,:]
+        threshold = kwargs.get('threshold', None)
+        # Allow for independent thresholding
+        t1,t2 = 2*[threshold] if np.isscalar(threshold) else threshold
+        threshold_type = kwargs.get('threshold_type', 'percent')
+        Ug,Sg,Vgt = _threshold_svd(Omega, t1, threshold_type)
+        U,S,Vt = _threshold_svd(self.X2, t2, threshold_type)
 
         # II. Compute operators
         n,_ = self.X2.shape
