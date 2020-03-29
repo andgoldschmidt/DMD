@@ -4,8 +4,6 @@
 #
 # TODO
 # - Should we create an ABC interface for DMD?
-# - Should we store the DMD result as a scipy state space model (dlsim)?
-# - Else, should simulate have options 'continuous' and 'euler'? (at interface)
 #-----
 import numpy as np
 from numpy.linalg import svd, pinv, eig
@@ -20,12 +18,15 @@ def delay_embed(X, shift):
     Delay-embed the matrix X with measurements from future times.
     
     parameters:
-        X: Data matrix with columns storing states at sequential time measurements
-        shift: Number of future times copies to augment to the current time state       
+        X: 
+            Data matrix with columns storing states at sequential time measurements
+        shift: 
+            Number of future times copies to augment to the current time state       
 
     returns:
-        shifted X: the function maps (d, t) to (shift+1, d, t-shft) which
-                   is stacked into ((shift+1)*d, t-shift)
+        shifted X: 
+            the function maps (d, t) to (shift+1, d, t-shft) which
+            is stacked into ((shift+1)*d, t-shift)
     '''
     if X.ndim != 2:
         raise ValueError('In delay_embed, invalid X matrix shape of ' + str(X.shape))
@@ -88,7 +89,7 @@ def plot_eigs(eigs, **kwargs):
     ax.add_artist(plt.Circle((0,0), 1, color='k', linestyle='--', fill=False))
     return fig, ax
 
-def _threshold_svd(X, threshold, threshold_type):
+def threshold_svd(X, threshold, threshold_type):
     '''
     Parameters:
         X: 
@@ -99,13 +100,12 @@ def _threshold_svd(X, threshold, threshold_type):
             Type of truncation, ignored if threshold=None
     '''
     U, S, Vt = svd(X, full_matrices=False)
-    if threshold is None:
+    if threshold_type == 'percent':
+        r = np.sum(S/np.max(S) > threshold)
+    elif threshold_type == 'count':
         r = threshold
     else:
-        if threshold_type == 'percent':
-            r = np.sum(S/np.max(S) > threshold)
-        elif threshold_type == 'count':
-            r = threshold
+        raise ValueError('Invalid threshold_type.')
     return U[:,:r], S[:r], Vt[:r,:]
 
 # ------------------------------------------------------
@@ -145,8 +145,11 @@ class DMD:
         
         # I. Compute SVD
         threshold = kwargs.get('threshold', None)
-        threshold_type = kwargs.get('threshold_type', 'percent')
-        U, S, Vt = _threshold_svd(self.X1, threshold, threshold_type)
+        if threshold is None:
+            U, S, Vt = svd(self.X1, full_matrices=False)
+        else:
+            threshold_type = kwargs.get('threshold_type', 'percent')
+            U, S, Vt = threshold_svd(self.X1, threshold, threshold_type)
 
         # II: Compute operators: X2 = A X1 and Atilde = U*AU
         Atilde = dag(U)@self.X2@dag(Vt)@np.diag(1/S)
@@ -238,34 +241,37 @@ class DMDc:
         '''
         self.X1 = X1
         self.X2 = X2
-        self.Ups = Ups[:,:-1] if Ups.shape[1]==len(ts) else Ups # ONLY these 2 options
-        
+        self.Ups = Ups if Ups.shape[1]==self.X1.shape[1] else Ups[:,:-1] # ONLY these 2 options
+        Omega = np.vstack([self.X1, self.Ups])
+
         self.t0 = ts[0]
         self.dt = ts[1] - ts[0]
         self.orig_timesteps = ts if len(ts) == self.X1.shape[1] else ts[:-1]
         
         # I. Compute SVDs
-        Omega = np.vstack([self.X1, self.Ups])
         threshold = kwargs.get('threshold', None)
-        # Allow for independent thresholding
-        t1,t2 = 2*[threshold] if np.isscalar(threshold) else threshold
-        threshold_type = kwargs.get('threshold_type', 'percent')
-        Ug,Sg,Vgt = _threshold_svd(Omega, t1, threshold_type)
-        U,S,Vt = _threshold_svd(self.X2, t2, threshold_type)
+        if threshold is None:
+            Ug, Sg, Vgt = svd(Omega, full_matrices=False)
+            U, S, Vt = svd(self.X2, full_matrices=False)
+        else:
+            # Allow for independent thresholding
+            t1,t2 = 2*[threshold] if np.isscalar(threshold) else threshold
+            threshold_type = kwargs.get('threshold_type', 'percent')
+            Ug,Sg,Vgt = threshold_svd(Omega, t1, threshold_type)
+            U,S,Vt = threshold_svd(self.X2, t2, threshold_type)
 
         # II. Compute operators
         n,_ = self.X2.shape
-        self.Atilde = dag(U)@self.X2@dag(Vgt)@np.diag(1/Sg)@dag(Ug[:n,:])@U
-        self.Btilde = dag(U)@self.X2@dag(Vgt)@np.diag(1/Sg)@dag(Ug[n:,:]) 
+        left = self.X2@dag(Vgt)@np.diag(1/Sg)
+        self.A = left@dag(Ug[:n,:])     
+        self.B = left@dag(Ug[n:,:])
 
         # III. DMD modes   
-        self.A = self.X2@dag(Vgt)@np.diag(1/Sg)@dag(Ug[:n,:])     
+        self.Atilde = dag(U)@self.A@U
+        self.Btilde = dag(U)@self.B
         self.eigs, W = eig(self.Atilde)
         self.modes = self.A@U@W
         
-        # IV. Control (TODO: Btilde -> B -> continuous B operator) 
-        self.B = self.X2@dag(Vgt)@np.diag(1/Sg)@dag(Ug[n:,:])
-
     @classmethod
     def from_full(cls, X, Ups, ts, **kwargs):
         X2 = X[:, 1:]
@@ -292,9 +298,9 @@ class DMDc:
         return np.zeros([self.Ups.shape[0], n_steps])
 
 # ------------------------------------------------------
-# -- DMDc with separate access to lhs and rhs.
+# -- bilinear DMD
 # ------------------------------------------------------
-class bilinear_DMDc:
+class biDMD:
     def __init__(self, X2, X1, U, ts, **kwargs):
         '''
         X2 = A X1 + U B X1
@@ -334,69 +340,130 @@ class bilinear_DMDc:
         self.dt = ts[1] - ts[0]
         self.orig_timesteps = ts if len(ts) == self.X1.shape[1] else ts[:-1]
 
+        # store useful dimension
+        n_time = len(self.orig_timesteps)
+
         # Partially unwrap delay embedding to make sure the correct control signals
-        # are combined with the correct data times.
+        #   are combined with the correct data times. The unwrapped (=>) operators:
+        #     X1  => (delays+1) x (measured dimensions) x (measurement times)
+        #     U   => (delays+1) x (number of controls)  x (measurement times)
+        #     Ups => (delays+1) x (controls) x (measured dimensions) x (measurement times)
+        #         => (delays+1 x controls x measured dimensions) x (measurement times)
+        #   Re-flatten all but the time dimension of Ups to set the structure of the
+        #   data matrix. This will set the strucutre of the B operator to match our
+        #   time-delay function.
         self.shift = kwargs.get('shift', 0)
-        self.Ups = np.einsum('sit, sjt->sijt',
-                             self.U.reshape(self.shift+1, -1, len(self.orig_timesteps)),
-                             self.X1.reshape(self.shift+1, -1, len(self.orig_timesteps))
-                            ).reshape(-1, len(self.orig_timesteps))
+        self.Ups = np.einsum('sct, smt->scmt',
+                             self.U.reshape(self.shift+1, -1, n_time),
+                             self.X1.reshape(self.shift+1, -1, n_time)
+                            ).reshape(-1, n_time)
+        Omega = np.vstack([self.X1, self.Ups])
         
         # I. Compute SVDs
-        Omega = np.vstack([self.X1, self.Ups])
         threshold = kwargs.get('threshold', None)
-        # Allow for independent thresholding
-        t1,t2 = 2*[threshold] if np.isscalar(threshold) else threshold
-        threshold_type = kwargs.get('threshold_type', 'percent')
-        Ug,Sg,Vgt = _threshold_svd(Omega, t1, threshold_type)
-        U,S,Vt = _threshold_svd(self.X2, t2, threshold_type)
+        if threshold is None:
+            Ug, Sg, Vgt = svd(Omega, full_matrices=False)
+            U, S, Vt = svd(self.X2, full_matrices=False)
+        else:
+            # Allow for independent thresholding
+            t1,t2 = 2*[threshold] if np.isscalar(threshold) else threshold
+            threshold_type = kwargs.get('threshold_type', 'percent')
+            Ug,Sg,Vgt = threshold_svd(Omega, t1, threshold_type)
+            U,S,Vt = threshold_svd(self.X2, t2, threshold_type)
 
         # II. Compute operators
         n,_ = self.X2.shape
-        self.Atilde = dag(U)@self.X2@dag(Vgt)@np.diag(1/Sg)@dag(Ug[:n,:])@U
-        self.Btilde = dag(U)@self.X2@dag(Vgt)@np.diag(1/Sg)@dag(Ug[n:,:])
+        left = self.X2@dag(Vgt)@np.diag(1/Sg)
+        self.A = left@dag(Ug[:n,:])
+        self.B = left@dag(Ug[n:,:])
 
-        # III. DMD modes        
+        # III. DMD modes
+        self.Atilde = dag(U)@self.A@U
+        self.Btilde = dag(U)@self.B   
         self.eigs, W = eig(self.Atilde)
-        self.A = self.X2@dag(Vgt)@np.diag(1/Sg)@dag(Ug[:n,:])
-        self.modes = self.A@U@W
-        
-        # IV. Control (TODO: Btilde -> B -> continuous B operator) 
-        self.B = self.X2@dag(Vgt)@np.diag(1/Sg)@dag(Ug[n:,:])
+        self.modes = self.A@U@W        
 
-    def time_spectrum(self, t):
+
+    def predict_dst(self, control=None, x0=None):
         '''
-        Returns a continous approximation to the time dynamics of A, with dimensions
-        according to (eigenvalues)x(times).
+        Predict the future state from A and B using steps from X0 as long as 
+        a control is available, solving the discrete evolution
+            x_1 = A x_0 + B (u.x_0) = [A B] [x_0,
+                                             u.x_0]
 
-        Note that A = e^(curlyA dt) so we have for operator,eigs pairs of (A,Y) 
-        and (curlyA,Omega), e^log(Y)/dt = Omega 
-        '''
-        if np.isscalar(t):
-            return np.exp(np.log(self.eigs)*(t-self.t0)/self.dt)
-        else:
-            return np.array([self.time_spectrum(it) for it in t]).T
-
-    def predict(self, control, x0=None):
-        '''
-        Predict the future state from A and B using steps from X0 as long as a control is available.
-
-        We must use the current state of X for future state prediction! This is different than using
-        the control signal from the initial fit.
+        We must use the current state of X for future state prediction! This is
+        different than using the control signal from the initial fit.
 
         Parameters:
-            control: the time-delayed control signal.
+            control: 
+                the time-delayed control signal
+            x0:
+                the initial value
         '''
         control = self.U if control is None else control
         xt = self.X1[:,0] if x0 is None else x0 # Flat array
         res = []
-        # predict one fewer because we've appended the original x0
         for t in range(control.shape[1]):
-            # Careful with time delays! Outer product and flatten.
-            _ct = control[:, t].reshape(self.shift+1,-1)
-            _xt = xt.reshape(self.shift+1,-1)
-            ups_t = np.einsum('si,sj->sij', _ct, _xt).flatten()
+            # Outer product then flatten to correctly combine the different
+            #   times present due to time-delays. That is, make sure that
+            #   u(t)'s multiply x(t)'s
+            #     _ct    => (time-delays + 1) x (number of controls)
+            #     _xt    => (time-delays + 1) x (measured dimensions)
+            #     _ups_t => (time-delays + 1) x (controls) x (measurements)
+            #   Flatten to get the desired vector.
+            _ct = control[:, t].reshape(self.shift+1, -1)
+            _xt = xt.reshape(self.shift+1, -1)
+            ups_t = np.einsum('sc,sm->scm', _ct, _xt).flatten()
+
             xt_1 = self.A@xt + self.B@ups_t
+            xt = xt_1
+            res.append(xt_1)
+        return np.array(res).T
+
+    def predict_cts(self, control, dt=None, x0=None):
+        '''
+        Continuous control predicts X_dot = (A + uB)X for a control
+        signal over time-steps of dt, applying
+            x_1 = e^{A dt + u B dt } x_0
+        across each time-step dt where u is constant.
+    
+        Parameters:
+            control: 
+                the time-delayed control signal. Must match the 
+                dimensions of the training control signal.
+            dt:
+                the time-step along which the control changes
+            x0:
+                the initial value
+        '''
+        control = self.U if control is None else control
+        dt = self.dt if dt is None else dt
+        xt = self.X1[:,0] if x0 is None else x0 # Flat array
+
+        # store useful dimensions
+        delay_dim = self.shift + 1
+        control_dim = self.U.shape[0]//delay_dim
+        measure_1_dim = self.X1.shape[0]//delay_dim
+        to_dim = self.X2.shape[0]
+
+        res = []
+        for t in range(control.shape[1]):
+            # Correctly combine u(t) and B(t)
+            #   Initial:
+            #     B      <= (time-delays+1 x measurements_2) x (time-delays+1 x controls x measurements_1)
+            #   Reshape:
+            #     B      => (time-delays+1 x measurements_2) x (time-delays+1) x (controls) x (measurements_1)
+            #     _ct    => (time-delays+1) x (controls) 
+            #     _uBt   => (time-delays+1 x measurements_2) x (time-delays+1) x (measurements_1)
+            #            => (time-delays+1 x measurements_2) x (time-delays+1 x measurements_1)
+            #   Notice that _uBt is formed by a sum over all controls in order to act on the
+            #   state xt which has dimensions of (delays x measurements_1).
+            _uBt = np.einsum('ascm,sc->asm', 
+                             self.B.reshape(to_dim, delay_dim, control_dim, measure_1_dim), 
+                             control[:, t].reshape(delay_dim, control_dim)
+                            ).reshape(to_dim, delay_dim*measure_1_dim)
+
+            xt_1 = expm((self.A + _uBt)*dt)@xt
             xt = xt_1
             res.append(xt_1)
         return np.array(res).T
