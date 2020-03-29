@@ -212,13 +212,13 @@ class DMD:
 # -- DMD with control (DMDc)
 # ------------------------------------------------------
 class DMDc:   
-    def __init__(self, X2, X1, Ups, ts, **kwargs):
+    def __init__(self, X2, X1, U, ts, **kwargs):
         '''
         Parameters:
             X2, X1:
                 Data matrices with columns storing states at sequential time measurements,
                 such that X2 = A X1 + B U
-            Ups:
+            U:
                 Control matrix with columns storing control signals at sequential times.
             ts:
                 Sequential time series at which the X (or X1) measurements were taken.
@@ -230,7 +230,7 @@ class DMDc:
 
         Updates:
             self.X2,self.X1: data
-            self.Ups: control
+            self.U: control
             self.t0: initial time
             self.dt: timestep
             self.orig_timesteps: list of times for X1
@@ -241,8 +241,8 @@ class DMDc:
         '''
         self.X1 = X1
         self.X2 = X2
-        self.Ups = Ups if Ups.shape[1]==self.X1.shape[1] else Ups[:,:-1] # ONLY these 2 options
-        Omega = np.vstack([self.X1, self.Ups])
+        self.U = U if U.shape[1]==self.X1.shape[1] else U[:,:-1] # ONLY these 2 options
+        Omega = np.vstack([self.X1, self.U])
 
         self.t0 = ts[0]
         self.dt = ts[1] - ts[0]
@@ -273,10 +273,10 @@ class DMDc:
         self.modes = self.A@U@W
         
     @classmethod
-    def from_full(cls, X, Ups, ts, **kwargs):
+    def from_full(cls, X, U, ts, **kwargs):
         X2 = X[:, 1:]
         X1 = X[:, :-1]
-        return cls(X2, X1, Ups, ts, **kwargs)
+        return cls(X2, X1, U, ts, **kwargs)
 
     def predict(self, control=None, x0=None):
         '''
@@ -284,10 +284,10 @@ class DMDc:
             Default behavior (control=None) is to use the original control. (If the underlying A is desired, 
             format zeros_like u that runs for the desired time.)
         '''
-        Ups = self.Ups if control is None else control
+        U = self.U if control is None else control
         xt = self.X1[:,0] if x0 is None else x0
         res = []
-        for ut in Ups.T:
+        for ut in U.T:
             xt_1 = self.A@xt + self.B@ut
             xt = xt_1
             res.append(xt_1)
@@ -295,7 +295,7 @@ class DMDc:
 
     def zero_control(self, n_steps=None):
         n_steps = len(self.orig_timesteps) if n_steps is None else n_steps
-        return np.zeros([self.Ups.shape[0], n_steps])
+        return np.zeros([self.U.shape[0], n_steps])
 
 # ------------------------------------------------------
 # -- bilinear DMD
