@@ -307,7 +307,8 @@ class biDMD:
 
         Parameters:
             X2, X1: 
-                Offset data matrices with columns storing states at sequential times
+                Offset data matrices with columns storing states at sequential times.
+                Altenatively, X2 = X_dot and X1 = X.
             U: 
                 The bilinear control signal(s) acting on X1 in the RHS term U B X1.
             ts:
@@ -402,8 +403,8 @@ class biDMD:
         '''
         control = self.U if control is None else control
         xt = self.X1[:,0] if x0 is None else x0 # Flat array
-        res = []
-        for t in range(control.shape[1]):
+        res = [xt]
+        for t in range(control.shape[1]-1):
             # Outer product then flatten to correctly combine the different
             #   times present due to time-delays. That is, make sure that
             #   u(t)'s multiply x(t)'s
@@ -420,7 +421,7 @@ class biDMD:
             res.append(xt_1)
         return np.array(res).T
 
-    def predict_cts(self, control, dt=None, x0=None):
+    def predict_cts(self, control, x0=None, dt=None):
         '''
         Continuous control predicts X_dot = (A + uB)X for a control
         signal over time-steps of dt, applying
@@ -446,8 +447,8 @@ class biDMD:
         measure_1_dim = self.X1.shape[0]//delay_dim
         to_dim = self.X2.shape[0]
 
-        res = []
-        for t in range(control.shape[1]):
+        res = [xt]
+        for t in range(control.shape[1]-1):
             # Correctly combine u(t) and B(t)
             #   Initial:
             #     B      <= (time-delays+1 x measurements_2) x (time-delays+1 x controls x measurements_1)
@@ -458,7 +459,7 @@ class biDMD:
             #            => (time-delays+1 x measurements_2) x (time-delays+1 x measurements_1)
             #   Notice that _uBt is formed by a sum over all controls in order to act on the
             #   state xt which has dimensions of (delays x measurements_1).
-            _uBt = np.einsum('ascm,sc->asm', 
+            _uBt = np.einsum('ascm,sc->asm',
                              self.B.reshape(to_dim, delay_dim, control_dim, measure_1_dim), 
                              control[:, t].reshape(delay_dim, control_dim)
                             ).reshape(to_dim, delay_dim*measure_1_dim)
