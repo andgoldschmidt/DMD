@@ -278,17 +278,50 @@ class DMDc:
         X1 = X[:, :-1]
         return cls(X2, X1, U, ts, **kwargs)
 
-    def predict(self, control=None, x0=None):
+    def predict_dst(self, control=None, x0=None):
         '''
-        Predict the future state from A and B using steps from X0 as long as a control signal is available.
-            Default behavior (control=None) is to use the original control. (If the underlying A is desired, 
-            format zeros_like u that runs for the desired time.)
+        Predict the future state from A and B using steps from X0 as long as a control signal is available
+        using the discrete system equation,
+                    X_2 = A X_1 + B u_1
+
+        Default behavior (control=None) is to use the original control. (If the underlying A is desired, 
+        format zeros_like u that runs for the desired time.)
         '''
         U = self.U if control is None else control
         xt = self.X1[:,0] if x0 is None else x0
-        res = []
-        for ut in U.T:
+        res = [xt]
+        for ut in U[:,:-1].T:
             xt_1 = self.A@xt + self.B@ut
+            xt = xt_1
+            res.append(xt_1)
+        return np.array(res).T
+
+    def predict_cts(self, control=None, x0=None, dt=None):
+        '''
+        Predict the future state from A and B using steps from X0 as long as a control signal is available
+        using the continuous system equation,
+                    X_dot = A X + B u
+                 => x(t+dt) = e^{dt A}(x(t) + dt B u(t))
+
+        Default behavior (control=None) is to use the original control. (If the underlying A is desired, 
+        format zeros_like u that runs for the desired time.) Be sure that dt matches the train dt if
+        using delay embeddings.
+
+        Parameters:
+            control: 
+                the time-delayed control signal. Must match the 
+                dimensions of the training control signal.
+            x0:
+                the initial value
+            dt:
+                the time-step along which the control changes
+        '''
+        U = self.U if control is None else control
+        dt = self.dt if dt is None else dt
+        xt = self.X1[:,0] if x0 is None else x0
+        res = [xt]
+        for ut in U[:,:-1].T:
+            xt_1 = expm(dt*self.A)@(xt + dt*self.B@ut)
             xt = xt_1
             res.append(xt_1)
         return np.array(res).T
@@ -384,7 +417,6 @@ class biDMD:
         self.eigs, W = eig(self.Atilde)
         self.modes = self.A@U@W        
 
-
     def predict_dst(self, control=None, x0=None):
         '''
         Predict the future state from A and B using steps from X0 as long as 
@@ -421,21 +453,22 @@ class biDMD:
             res.append(xt_1)
         return np.array(res).T
 
-    def predict_cts(self, control, x0=None, dt=None):
+    def predict_cts(self, control=None, x0=None, dt=None):
         '''
-        Continuous control predicts X_dot = (A + uB)X for a control
-        signal over time-steps of dt, applying
+        Continuous control predicts X_dot = (A + uB)X for a control signal
+        over time-steps of dt, applying
             x_1 = e^{A dt + u B dt } x_0
-        across each time-step dt where u is constant.
+        across each time-step dt where u is constant. Be sure that dt matches
+        the train dt if using delay embeddings.
     
         Parameters:
             control: 
                 the time-delayed control signal. Must match the 
                 dimensions of the training control signal.
-            dt:
-                the time-step along which the control changes
             x0:
                 the initial value
+            dt:
+                the time-step along which the control changes
         '''
         control = self.U if control is None else control
         dt = self.dt if dt is None else dt
@@ -472,6 +505,4 @@ class biDMD:
     def zero_control(self, n_steps=None):
         n_steps = len(self.orig_timesteps) if n_steps is None else n_steps
         return np.zeros([self.Ups.shape[0], n_steps])
-
-
 
