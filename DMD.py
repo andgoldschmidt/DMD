@@ -3,7 +3,9 @@
 # @author Andy Goldschmidt
 #
 # TODO
+# - classic DMD needs predict_dst / predict_cts
 # - Should we create an ABC interface for DMD?
+# - __init__.py and separate files
 #-----
 import numpy as np
 from numpy.linalg import svd, pinv, eig
@@ -498,6 +500,186 @@ class biDMD:
                             ).reshape(to_dim, delay_dim*measure_1_dim)
 
             xt_1 = expm((self.A + _uBt)*dt)@xt
+            xt = xt_1
+            res.append(xt_1)
+        return np.array(res).T
+
+    def zero_control(self, n_steps=None):
+        n_steps = len(self.orig_timesteps) if n_steps is None else n_steps
+        return np.zeros([self.Ups.shape[0], n_steps])
+
+# ------------------------------------------------------
+# -- bilinear DMD with control
+# ------------------------------------------------------
+class biDMDc:
+    def __init__(self, X2, X1, U, ts, **kwargs):
+        '''
+        X2 = A X1 + U B X1 + D U
+
+        Parameters:
+            X2, X1: 
+                Offset data matrices with columns storing states at sequential times.
+                Altenatively, X2 = X_dot and X1 = X.
+            U: 
+                The bilinear control signal(s) acting on X1 in the RHS term U B X1.
+            ts:
+                Sequential time series at which the X (or X1) measurements were taken.
+
+        Optional Parameters:
+            shift: default 0 
+                Number of time delays (necessary to match times in the u B X control term)
+            threshold: Real or int. default None
+                Truncate the singular values associated with DMD modes
+            threshold_type: (requires param threshold) {'number', 'percent'}. default 'percent'
+
+        Updates:
+            self.X2,self.X1: data
+            self.U: bilinear control signal
+            self.Ups: control signal U.X1
+            self.t0: initial time
+            self.dt: timestep
+            self.orig_timesteps: list of times for X1
+            self.A (self.Atilde): discrete time dynamical operator (projected)
+            self.B (self.Btilde): discrete time control operator (projected)
+            self.eigs: eigenvalues of Atilde
+            self.modes: eigenvectors of A and Atilde
+        ''' 
+        self.U = U
+        self.X1 = X1
+        self.X2 = X2
+
+        self.t0 = ts[0]
+        self.dt = ts[1] - ts[0]
+        self.orig_timesteps = ts if len(ts) == self.X1.shape[1] else ts[:-1]
+
+        # store useful dimension
+        n_time = len(self.orig_timesteps)
+        self.shift = kwargs.get('shift', 0)
+        delay_dim = self.shift + 1
+
+        # Partially unwrap delay embedding to make sure the correct control signals
+        #   are combined with the correct data times. The unwrapped (=>) operators:
+        #     X1  => (delays+1) x (measured dimensions) x (measurement times)
+        #     U   => (delays+1) x (number of controls)  x (measurement times)
+        #     Ups => (delays+1) x (controls) x (measured dimensions) x (measurement times)
+        #         => (delays+1 x controls x measured dimensions) x (measurement times)
+        #   Re-flatten all but the time dimension of Ups to set the structure of the
+        #   data matrix. This will set the strucutre of the B operator to match our
+        #   time-delay function.
+        self.Ups = np.einsum('sct, smt->scmt',
+                             self.U.reshape(delay_dim, -1, n_time),
+                             self.X1.reshape(delay_dim, -1, n_time)
+                            ).reshape(-1, n_time)
+        Omega = np.vstack([self.X1, self.Ups, self.U])
+        
+        # I. Compute SVDs
+        threshold = kwargs.get('threshold', None)
+        if threshold is None:
+            Ug, Sg, Vgt = svd(Omega, full_matrices=False)
+            U, S, Vt = svd(self.X2, full_matrices=False)
+        else:
+            # Allow for independent thresholding
+            t1,t2 = 2*[threshold] if np.isscalar(threshold) else threshold
+            threshold_type = kwargs.get('threshold_type', 'percent')
+            Ug,Sg,Vgt = threshold_svd(Omega, t1, threshold_type)
+            U,S,Vt = threshold_svd(self.X2, t2, threshold_type)
+
+        # II. Compute operators
+        c = self.U.shape[0]//delay_dim
+        n = self.X1.shape[0]
+        left = self.X2@dag(Vgt)@np.diag(1/Sg)
+        # Omega = X + uX + u => dim'ns: n + c*n + c
+        self.A = left@dag(Ug[:n,:])
+        self.B = left@dag(Ug[n:(c+1)*n,:])
+        self.D = left@dag(Ug[(c+1)*n:, :])
+
+        # III. DMD modes
+        self.Atilde = dag(U)@self.A@U
+        self.Btilde = dag(U)@self.B
+        self.Dtilde = dag(U)@self.D
+        self.eigs, W = eig(self.Atilde)
+        self.modes = self.A@U@W
+
+    def predict_dst(self, control=None, x0=None):
+        '''
+        Predict the future state from A and B using steps from X0 as long as 
+        a control is available, solving the discrete evolution
+            x_1 = A x_0 + B (u.x_0) = [A B] [x_0,
+                                             u.x_0]
+
+        We must use the current state of X for future state prediction! This is
+        different than using the control signal from the initial fit.
+
+        Parameters:
+            control: 
+                the time-delayed control signal
+            x0:
+                the initial value
+        '''
+        control = self.U if control is None else control
+        xt = self.X1[:,0] if x0 is None else x0 # Flat array
+        res = [xt]
+        for t in range(control.shape[1]-1):
+            # Outer product then flatten to correctly combine the different
+            #   times present due to time-delays. That is, make sure that
+            #   u(t)'s multiply x(t)'s
+            #     _ct    => (time-delays + 1) x (number of controls)
+            #     _xt    => (time-delays + 1) x (measured dimensions)
+            #     _ups_t => (time-delays + 1) x (controls) x (measurements)
+            #   Flatten to get the desired vector.
+            _ct = control[:, t].reshape(self.shift+1, -1)
+            _xt = xt.reshape(self.shift+1, -1)
+            ups_t = np.einsum('sc,sm->scm', _ct, _xt).flatten()
+
+            xt_1 = self.A@xt + self.B@ups_t + self.D@control[:,t]
+            xt = xt_1
+            res.append(xt_1)
+        return np.array(res).T
+
+    def predict_cts(self, control=None, x0=None, dt=None):
+        '''
+        Continuous control predicts X_dot = (A + uB)X for a control
+        signal over time-steps of dt, applying
+            x_1 = e^{A dt + u B dt } x_0
+        across each time-step dt where u is constant.
+    
+        Parameters:
+            control: 
+                the time-delayed control signal. Must match the 
+                dimensions of the training control signal.
+            dt:
+                the time-step along which the control changes
+            x0:
+                the initial value
+        '''
+        control = self.U if control is None else control
+        dt = self.dt if dt is None else dt
+        xt = self.X1[:,0] if x0 is None else x0 # Flat array
+
+        # store useful dimensions
+        delay_dim = self.shift + 1
+        control_dim = self.U.shape[0]//delay_dim
+        measure_1_dim = self.X1.shape[0]//delay_dim
+        to_dim = self.X2.shape[0]
+
+        res = [xt]
+        for t in range(control.shape[1]-1):
+            # Correctly combine u(t) and B(t)
+            #   Initial:
+            #     B      <= (time-delays+1 x measurements_2) x (time-delays+1 x controls x measurements_1)
+            #   Reshape:
+            #     B      => (time-delays+1 x measurements_2) x (time-delays+1) x (controls) x (measurements_1)
+            #     _ct    => (time-delays+1) x (controls) 
+            #     _uBt   => (time-delays+1 x measurements_2) x (time-delays+1) x (measurements_1)
+            #            => (time-delays+1 x measurements_2) x (time-delays+1 x measurements_1)
+            #   Notice that _uBt is formed by a sum over all controls in order to act on the
+            #   state xt which has dimensions of (delays x measurements_1).
+            _uBt = np.einsum('ascm,sc->asm',
+                             self.B.reshape(to_dim, delay_dim, control_dim, measure_1_dim), 
+                             control[:, t].reshape(delay_dim, control_dim)
+                            ).reshape(to_dim, delay_dim*measure_1_dim)
+
+            xt_1 = expm(dt*(self.A + _uBt))@(xt + dt*self.D@control[:, t])
             xt = xt_1
             res.append(xt_1)
         return np.array(res).T
