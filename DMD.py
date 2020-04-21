@@ -27,7 +27,7 @@ def delay_embed(X, shift):
 
     returns:
         shifted X: 
-            the function maps (d, t) to (shift+1, d, t-shft) which
+            the function maps (d, t) to (shift+1, d, t-shift) which
             is stacked into ((shift+1)*d, t-shift)
     '''
     if X.ndim != 2:
